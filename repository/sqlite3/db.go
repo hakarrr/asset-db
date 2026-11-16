@@ -5,6 +5,7 @@
 package sqlite3
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -143,19 +144,27 @@ func (r *SqliteRepository) Type() string {
 var numericZoneTimestamp = regexp.MustCompile(`^([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?) ([+-][0-9]{4}) ([+-][0-9]{4})(?: m=[+-][0-9]+(?:\.[0-9]+)?)?$`)
 
 func (r *SqliteRepository) normalizeMigrationTimestamps() error {
-	tx, err := r.DB.Begin()
+	// Reserve the writer before reading history so concurrent repairs cannot
+	// try to upgrade an obsolete WAL read snapshot.
+	ctx := context.Background()
+	conn, err := r.DB.Conn(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") }()
 	var exists int
-	if err := tx.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='gorp_migrations'").Scan(&exists); err != nil {
+	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='gorp_migrations'").Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
-		return tx.Commit()
+		_, err := conn.ExecContext(ctx, "COMMIT")
+		return err
 	}
-	rows, err := tx.Query("SELECT id, CAST(applied_at AS TEXT) FROM gorp_migrations")
+	rows, err := conn.QueryContext(ctx, "SELECT id, CAST(applied_at AS TEXT) FROM gorp_migrations")
 	if err != nil {
 		return err
 	}
@@ -185,9 +194,10 @@ func (r *SqliteRepository) normalizeMigrationTimestamps() error {
 		return err
 	}
 	for _, c := range corrections {
-		if _, err := tx.Exec("UPDATE gorp_migrations SET applied_at=? WHERE id=? AND CAST(applied_at AS TEXT)=?", c.after, c.id, c.before); err != nil {
+		if _, err := conn.ExecContext(ctx, "UPDATE gorp_migrations SET applied_at=? WHERE id=? AND CAST(applied_at AS TEXT)=?", c.after, c.id, c.before); err != nil {
 			return err
 		}
 	}
-	return tx.Commit()
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
 }
