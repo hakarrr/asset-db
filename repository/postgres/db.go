@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -70,8 +71,7 @@ func New(dbtype, dsn string) (*PostgresRepository, error) {
 
 // postgresDatabase creates a new PostgreSQL database connection using the provided data source name (dsn).
 func postgresDatabase(dsn string, rcfg, wcfg WorkerConfig) (*PostgresRepository, error) {
-	dsn = dsn + "?sslmode=disable&statement_cache_capacity=256&timezone=UTC&connect_timeout=5"
-	dsn = dsn + "&application_name=asset-db&statement_timeout=60000&lock_timeout=5000"
+	dsn = postgresConnectionString(dsn)
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -158,4 +158,17 @@ func (pr *PostgresRepository) Close() error {
 // Type implements the Repository interface.
 func (pr *PostgresRepository) Type() string {
 	return pr.dbtype
+}
+
+// postgresConnectionString appends the repository options to a PostgreSQL URL.
+func postgresConnectionString(dsn string) string {
+	separator := "?"
+	if strings.Contains(dsn, "?") {
+		separator = "&"
+		if strings.HasSuffix(dsn, "?") || strings.HasSuffix(dsn, "&") {
+			separator = ""
+		}
+	}
+	return dsn + separator + "sslmode=disable&statement_cache_capacity=256&timezone=UTC&connect_timeout=5" +
+		"&application_name=asset-db&statement_timeout=60000&lock_timeout=5000"
 }
