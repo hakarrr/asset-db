@@ -18,7 +18,11 @@ func TestSQLiteConcurrentMigrationTimestampRepair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close setup connection: %v", err)
+		}
+	})
 	if _, err = db.Exec("CREATE TABLE gorp_migrations (id TEXT PRIMARY KEY, applied_at DATETIME)"); err != nil {
 		t.Fatal(err)
 	}
@@ -37,7 +41,11 @@ func TestSQLiteConcurrentMigrationTimestampRepair(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer rdb.Close()
+		t.Cleanup(func() {
+			if err := rdb.Close(); err != nil {
+				t.Errorf("close repair connection: %v", err)
+			}
+		})
 		rdb.SetMaxOpenConns(1)
 		if e = rdb.Ping(); e != nil {
 			t.Fatal(e)
